@@ -1,25 +1,25 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { 
   Users, 
   BarChart3, 
   Download, 
   Play, 
-  Lock, 
-  Unlock,
   Loader2,
   Search,
   RefreshCw,
   CheckCircle,
   AlertCircle,
   Eye,
-  EyeOff
+  EyeOff,
+  Lock,
+  Edit3,
+  Save,
+  X
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DataGridBackground } from '@/components/DataGridBackground';
-import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { Participant, GENDER_OPTIONS } from '@/lib/types';
 import { toast } from 'sonner';
@@ -33,6 +33,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
+const ADMIN_PASSWORD = 'DARVIXHRSC';
+
 interface Stats {
   total: number;
   male: number;
@@ -42,32 +44,53 @@ interface Stats {
   completionRate: number;
 }
 
+interface MatchWithDetails {
+  id: string;
+  participant_id: string;
+  participant_name: string;
+  match_1_id: string | null;
+  match_1_name: string | null;
+  match_1_score: number | null;
+  match_2_id: string | null;
+  match_2_name: string | null;
+  match_2_score: number | null;
+  match_3_id: string | null;
+  match_3_name: string | null;
+  match_3_score: number | null;
+}
+
+interface EditingScore {
+  matchId: string;
+  field: 'match_1_score' | 'match_2_score' | 'match_3_score';
+  value: number;
+}
+
 export default function Admin() {
-  const navigate = useNavigate();
-  const { user, loading: authLoading, isAdmin, signOut } = useAuth();
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [password, setPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
   
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [matches, setMatches] = useState<MatchWithDetails[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [matchingRunning, setMatchingRunning] = useState(false);
   const [matchingComplete, setMatchingComplete] = useState(false);
   const [resultsVisible, setResultsVisible] = useState(false);
+  const [activeTab, setActiveTab] = useState<'participants' | 'matches'>('participants');
+  const [editingScore, setEditingScore] = useState<EditingScore | null>(null);
 
-  useEffect(() => {
-    if (!authLoading) {
-      if (!user) {
-        navigate('/auth');
-        return;
-      }
-      if (!isAdmin) {
-        toast.error('Access denied. Admin only.');
-        navigate('/status');
-        return;
-      }
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password === ADMIN_PASSWORD) {
+      setIsAuthenticated(true);
+      setPasswordError('');
       loadData();
+    } else {
+      setPasswordError('Invalid password');
     }
-  }, [user, authLoading, isAdmin, navigate]);
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -98,13 +121,35 @@ export default function Admin() {
         completionRate: total > 0 ? Math.round((completed / total) * 100) : 0,
       });
 
-      // Check if matching has been run
+      // Load matches with participant names
       const { data: matchesData } = await supabase
         .from('matches')
-        .select('id')
-        .limit(1);
+        .select('*');
 
-      setMatchingComplete(matchesData && matchesData.length > 0);
+      if (matchesData && matchesData.length > 0) {
+        setMatchingComplete(true);
+        
+        // Build participant name map
+        const nameMap = new Map<string, string>();
+        participantsData?.forEach(p => nameMap.set(p.id, p.name));
+
+        const matchesWithDetails: MatchWithDetails[] = matchesData.map(m => ({
+          id: m.id,
+          participant_id: m.participant_id,
+          participant_name: nameMap.get(m.participant_id) || 'Unknown',
+          match_1_id: m.match_1_id,
+          match_1_name: m.match_1_id ? nameMap.get(m.match_1_id) || 'Unknown' : null,
+          match_1_score: m.match_1_score,
+          match_2_id: m.match_2_id,
+          match_2_name: m.match_2_id ? nameMap.get(m.match_2_id) || 'Unknown' : null,
+          match_2_score: m.match_2_score,
+          match_3_id: m.match_3_id,
+          match_3_name: m.match_3_id ? nameMap.get(m.match_3_id) || 'Unknown' : null,
+          match_3_score: m.match_3_score,
+        }));
+
+        setMatches(matchesWithDetails);
+      }
 
       // Check results visibility
       const { data: settings } = await supabase
@@ -124,14 +169,14 @@ export default function Admin() {
 
   const runMatching = async () => {
     if (matchingComplete) {
-      toast.error('Matching has already been run. This is a one-time operation.');
-      return;
-    }
+      const confirmed = window.confirm(
+        'Matching has already been run. Running again will DELETE all existing matches and create new ones. Continue?'
+      );
+      if (!confirmed) return;
 
-    const confirmed = window.confirm(
-      'Are you sure you want to run the matching algorithm? This can only be done once.'
-    );
-    if (!confirmed) return;
+      // Delete existing matches
+      await supabase.from('matches').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    }
 
     setMatchingRunning(true);
     try {
@@ -139,7 +184,7 @@ export default function Admin() {
       
       if (error) throw error;
 
-      toast.success('Matching complete! Results are now available.');
+      toast.success('Matching complete!');
       setMatchingComplete(true);
       loadData();
     } catch (err) {
@@ -154,7 +199,6 @@ export default function Admin() {
     try {
       const newValue = !resultsVisible;
       
-      // Check if setting exists
       const { data: existing } = await supabase
         .from('app_settings')
         .select('id')
@@ -180,94 +224,82 @@ export default function Admin() {
     }
   };
 
-  const exportMatches = async () => {
+  const startEditing = (matchId: string, field: 'match_1_score' | 'match_2_score' | 'match_3_score', currentValue: number | null) => {
+    setEditingScore({
+      matchId,
+      field,
+      value: currentValue || 0,
+    });
+  };
+
+  const saveScore = async () => {
+    if (!editingScore) return;
+
     try {
-      const { data: matches, error } = await supabase
+      const { error } = await supabase
         .from('matches')
-        .select(`
-          participant_id,
-          match_1_id,
-          match_1_score,
-          match_2_id,
-          match_2_score,
-          match_3_id,
-          match_3_score
-        `);
+        .update({ [editingScore.field]: editingScore.value })
+        .eq('id', editingScore.matchId);
 
       if (error) throw error;
-      if (!matches || matches.length === 0) {
-        toast.error('No matches to export');
-        return;
-      }
 
-      // Get all participant names
-      const { data: allParticipants } = await supabase
-        .from('participants')
-        .select('id, name, email');
+      // Update local state
+      setMatches(prev => prev.map(m => {
+        if (m.id === editingScore.matchId) {
+          return { ...m, [editingScore.field]: editingScore.value };
+        }
+        return m;
+      }));
 
-      const participantMap = new Map(allParticipants?.map(p => [p.id, p]) || []);
-
-      // Build CSV
-      const headers = ['Participant', 'Email', 'Match 1', 'Score 1', 'Match 2', 'Score 2', 'Match 3', 'Score 3'];
-      const rows = matches.map(m => {
-        const participant = participantMap.get(m.participant_id);
-        const match1 = m.match_1_id ? participantMap.get(m.match_1_id) : null;
-        const match2 = m.match_2_id ? participantMap.get(m.match_2_id) : null;
-        const match3 = m.match_3_id ? participantMap.get(m.match_3_id) : null;
-        
-        return [
-          participant?.name || 'Unknown',
-          participant?.email || '',
-          match1?.name || 'N/A',
-          m.match_1_score || 0,
-          match2?.name || 'N/A',
-          m.match_2_score || 0,
-          match3?.name || 'N/A',
-          m.match_3_score || 0,
-        ].join(',');
-      });
-
-      const csv = [headers.join(','), ...rows].join('\n');
-      downloadCSV(csv, 'perfect-date-matches.csv');
-      toast.success('Matches exported!');
+      toast.success('Score updated!');
+      setEditingScore(null);
     } catch (err) {
-      console.error('Export error:', err);
-      toast.error('Failed to export');
+      console.error('Error saving score:', err);
+      toast.error('Failed to save score');
     }
   };
 
-  const exportUnmatched = async () => {
-    try {
-      const { data: matches } = await supabase
-        .from('matches')
-        .select('participant_id');
-
-      const matchedIds = new Set(matches?.map(m => m.participant_id) || []);
-      
-      const unmatched = participants.filter(
-        p => p.questionnaire_complete && !matchedIds.has(p.id)
-      );
-
-      if (unmatched.length === 0) {
-        toast.success('No unmatched participants!');
-        return;
-      }
-
-      const headers = ['Name', 'Email', 'Gender', 'Preference'];
-      const rows = unmatched.map(p => [
-        p.name,
-        p.email,
-        p.gender,
-        p.partner_preference.join(';'),
-      ].join(','));
-
-      const csv = [headers.join(','), ...rows].join('\n');
-      downloadCSV(csv, 'perfect-date-unmatched.csv');
-      toast.success('Unmatched list exported!');
-    } catch (err) {
-      console.error('Export error:', err);
-      toast.error('Failed to export');
+  const exportMatches = async () => {
+    if (matches.length === 0) {
+      toast.error('No matches to export');
+      return;
     }
+
+    const headers = ['Participant', 'Match 1', 'Score 1', 'Match 2', 'Score 2', 'Match 3', 'Score 3'];
+    const rows = matches.map(m => [
+      m.participant_name,
+      m.match_1_name || 'N/A',
+      m.match_1_score || 0,
+      m.match_2_name || 'N/A',
+      m.match_2_score || 0,
+      m.match_3_name || 'N/A',
+      m.match_3_score || 0,
+    ].join(','));
+
+    const csv = [headers.join(','), ...rows].join('\n');
+    downloadCSV(csv, 'perfect-date-matches.csv');
+    toast.success('Matches exported!');
+  };
+
+  const exportParticipants = () => {
+    if (participants.length === 0) {
+      toast.error('No participants to export');
+      return;
+    }
+
+    const headers = ['Name', 'Email', 'Age', 'Gender', 'Preference', 'Questionnaire Complete'];
+    const rows = participants.map(p => [
+      p.name,
+      p.email,
+      p.age,
+      getGenderLabel(p.gender),
+      p.partner_preference.map(getGenderLabel).join(';'),
+      p.questionnaire_complete ? 'Yes' : 'No',
+    ].join(','));
+
+    const csv = [headers.join(','), ...rows].join('\n');
+    downloadCSV(csv, 'perfect-date-participants.csv');
+    toast.success('Participants exported!');
   };
 
   const downloadCSV = (content: string, filename: string) => {
@@ -287,11 +319,61 @@ export default function Admin() {
     p.email.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const filteredMatches = matches.filter(m =>
+    m.participant_name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   const getGenderLabel = (gender: string) => {
     return GENDER_OPTIONS.find(g => g.value === gender)?.label || gender;
   };
 
-  if (authLoading || loading) {
+  // Login Screen
+  if (!isAuthenticated) {
+    return (
+      <DataGridBackground>
+        <div className="min-h-screen flex items-center justify-center px-4">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="w-full max-w-md"
+          >
+            <div className="bg-card border border-border rounded-2xl p-8">
+              <div className="text-center mb-8">
+                <img src={darvixLogo} alt="DARVIX" className="h-12 mx-auto mb-6" />
+                <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Lock className="w-8 h-8 text-primary" />
+                </div>
+                <h1 className="text-2xl font-bold text-foreground mb-2">Admin Access</h1>
+                <p className="text-muted-foreground text-sm">Enter password to continue</p>
+              </div>
+
+              <form onSubmit={handleLogin} className="space-y-6">
+                <div className="space-y-2">
+                  <Input
+                    type="password"
+                    placeholder="Password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="bg-background text-center"
+                  />
+                </div>
+
+                {passwordError && (
+                  <p className="text-sm text-destructive text-center">{passwordError}</p>
+                )}
+
+                <Button type="submit" className="w-full" size="lg">
+                  Enter Dashboard
+                </Button>
+              </form>
+            </div>
+          </motion.div>
+        </div>
+      </DataGridBackground>
+    );
+  }
+
+  if (loading) {
     return (
       <DataGridBackground>
         <div className="min-h-screen flex items-center justify-center">
@@ -307,16 +389,14 @@ export default function Admin() {
         {/* Header */}
         <header className="w-full py-6 px-4 border-b border-border">
           <div className="max-w-7xl mx-auto flex justify-between items-center">
-            <Link to="/">
-              <img src={darvixLogo} alt="DARVIX" className="h-10" />
-            </Link>
+            <img src={darvixLogo} alt="DARVIX" className="h-10" />
             <div className="flex items-center gap-4">
               <Button variant="ghost" size="sm" onClick={loadData}>
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Refresh
               </Button>
-              <Button variant="outline" size="sm" onClick={() => signOut()}>
-                Sign Out
+              <Button variant="outline" size="sm" onClick={() => setIsAuthenticated(false)}>
+                Logout
               </Button>
             </div>
           </div>
@@ -372,7 +452,7 @@ export default function Admin() {
             <div className="flex flex-wrap gap-4 mb-8">
               <Button 
                 onClick={runMatching} 
-                disabled={matchingRunning || matchingComplete}
+                disabled={matchingRunning}
                 className="gap-2"
               >
                 {matchingRunning ? (
@@ -380,14 +460,13 @@ export default function Admin() {
                 ) : (
                   <Play className="w-4 h-4" />
                 )}
-                {matchingComplete ? 'Matching Complete' : 'Run Matching'}
+                {matchingComplete ? 'Re-run Matching' : 'Run Matching'}
               </Button>
 
               <Button 
                 variant="outline" 
                 onClick={toggleResultsVisibility}
                 className="gap-2"
-                disabled={!matchingComplete}
               >
                 {resultsVisible ? (
                   <>
@@ -402,24 +481,40 @@ export default function Admin() {
                 )}
               </Button>
 
+              <Button variant="outline" onClick={exportParticipants} className="gap-2">
+                <Download className="w-4 h-4" />
+                Export Participants
+              </Button>
+
               <Button variant="outline" onClick={exportMatches} className="gap-2">
                 <Download className="w-4 h-4" />
                 Export Matches
               </Button>
+            </div>
 
-              <Button variant="outline" onClick={exportUnmatched} className="gap-2">
-                <Download className="w-4 h-4" />
-                Export Unmatched
+            {/* Tabs */}
+            <div className="flex gap-2 mb-6">
+              <Button
+                variant={activeTab === 'participants' ? 'default' : 'outline'}
+                onClick={() => setActiveTab('participants')}
+              >
+                Participants ({participants.length})
+              </Button>
+              <Button
+                variant={activeTab === 'matches' ? 'default' : 'outline'}
+                onClick={() => setActiveTab('matches')}
+              >
+                Matches ({matches.length})
               </Button>
             </div>
 
-            {/* Participants Table */}
+            {/* Search */}
             <div className="bg-card border border-border rounded-xl overflow-hidden">
               <div className="p-4 border-b border-border">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
-                    placeholder="Search participants..."
+                    placeholder="Search..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="pl-10 bg-background"
@@ -427,53 +522,185 @@ export default function Admin() {
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Age</TableHead>
-                      <TableHead>Gender</TableHead>
-                      <TableHead>Preference</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredParticipants.map((participant) => (
-                      <TableRow key={participant.id}>
-                        <TableCell className="font-medium">{participant.name}</TableCell>
-                        <TableCell className="text-muted-foreground">{participant.email}</TableCell>
-                        <TableCell>{participant.age}</TableCell>
-                        <TableCell>{getGenderLabel(participant.gender)}</TableCell>
-                        <TableCell>
-                          {participant.partner_preference.map(getGenderLabel).join(', ')}
-                        </TableCell>
-                        <TableCell>
-                          {participant.questionnaire_complete ? (
-                            <span className="inline-flex items-center gap-1 text-success text-sm">
-                              <CheckCircle className="w-4 h-4" />
-                              Complete
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-warning text-sm">
-                              <AlertCircle className="w-4 h-4" />
-                              Incomplete
-                            </span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {filteredParticipants.length === 0 && (
+              {/* Participants Table */}
+              {activeTab === 'participants' && (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                          No participants found
-                        </TableCell>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Age</TableHead>
+                        <TableHead>Gender</TableHead>
+                        <TableHead>Preference</TableHead>
+                        <TableHead>Status</TableHead>
                       </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredParticipants.map((participant) => (
+                        <TableRow key={participant.id}>
+                          <TableCell className="font-medium">{participant.name}</TableCell>
+                          <TableCell className="text-muted-foreground">{participant.email}</TableCell>
+                          <TableCell>{participant.age}</TableCell>
+                          <TableCell>{getGenderLabel(participant.gender)}</TableCell>
+                          <TableCell>
+                            {participant.partner_preference.map(getGenderLabel).join(', ')}
+                          </TableCell>
+                          <TableCell>
+                            {participant.questionnaire_complete ? (
+                              <span className="inline-flex items-center gap-1 text-success text-sm">
+                                <CheckCircle className="w-4 h-4" />
+                                Complete
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-warning text-sm">
+                                <AlertCircle className="w-4 h-4" />
+                                Incomplete
+                              </span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {filteredParticipants.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                            No participants found
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              {/* Matches Table */}
+              {activeTab === 'matches' && (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Participant</TableHead>
+                        <TableHead>Match 1</TableHead>
+                        <TableHead>Score 1</TableHead>
+                        <TableHead>Match 2</TableHead>
+                        <TableHead>Score 2</TableHead>
+                        <TableHead>Match 3</TableHead>
+                        <TableHead>Score 3</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredMatches.map((match) => (
+                        <TableRow key={match.id}>
+                          <TableCell className="font-medium">{match.participant_name}</TableCell>
+                          <TableCell>{match.match_1_name || '-'}</TableCell>
+                          <TableCell>
+                            {editingScore?.matchId === match.id && editingScore.field === 'match_1_score' ? (
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  type="number"
+                                  value={editingScore.value}
+                                  onChange={(e) => setEditingScore({ ...editingScore, value: parseInt(e.target.value) || 0 })}
+                                  className="w-20 h-8 text-sm"
+                                />
+                                <Button size="sm" variant="ghost" onClick={saveScore}>
+                                  <Save className="w-4 h-4" />
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => setEditingScore(null)}>
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span>{match.match_1_score ?? '-'}</span>
+                                {match.match_1_id && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => startEditing(match.id, 'match_1_score', match.match_1_score)}
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell>{match.match_2_name || '-'}</TableCell>
+                          <TableCell>
+                            {editingScore?.matchId === match.id && editingScore.field === 'match_2_score' ? (
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  type="number"
+                                  value={editingScore.value}
+                                  onChange={(e) => setEditingScore({ ...editingScore, value: parseInt(e.target.value) || 0 })}
+                                  className="w-20 h-8 text-sm"
+                                />
+                                <Button size="sm" variant="ghost" onClick={saveScore}>
+                                  <Save className="w-4 h-4" />
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => setEditingScore(null)}>
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span>{match.match_2_score ?? '-'}</span>
+                                {match.match_2_id && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => startEditing(match.id, 'match_2_score', match.match_2_score)}
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell>{match.match_3_name || '-'}</TableCell>
+                          <TableCell>
+                            {editingScore?.matchId === match.id && editingScore.field === 'match_3_score' ? (
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  type="number"
+                                  value={editingScore.value}
+                                  onChange={(e) => setEditingScore({ ...editingScore, value: parseInt(e.target.value) || 0 })}
+                                  className="w-20 h-8 text-sm"
+                                />
+                                <Button size="sm" variant="ghost" onClick={saveScore}>
+                                  <Save className="w-4 h-4" />
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => setEditingScore(null)}>
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span>{match.match_3_score ?? '-'}</span>
+                                {match.match_3_id && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => startEditing(match.id, 'match_3_score', match.match_3_score)}
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {filteredMatches.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                            {matchingComplete ? 'No matches found' : 'Run matching first to see results'}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
             </div>
           </motion.div>
         </main>
