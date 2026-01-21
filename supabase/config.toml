@@ -2,3 +2,6 @@ project_id = "osluakltnydcsnacxfwl"
 
 [functions.run-matching]
 verify_jwt = false
+
+[functions.admin-data]
+verify_jwt = false
