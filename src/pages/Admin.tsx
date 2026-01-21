@@ -95,22 +95,27 @@ export default function Admin() {
   const loadData = async () => {
     setLoading(true);
     try {
-      // Load participants
-      const { data: participantsData, error } = await supabase
-        .from('participants')
-        .select('*')
-        .order('created_at', { ascending: false });
+      // Load participants via edge function (bypasses RLS)
+      const { data: participantsResponse, error: participantsError } = await supabase.functions.invoke('admin-data', {
+        body: { password, action: 'get-participants' }
+      });
 
-      if (error) throw error;
-
-      setParticipants(participantsData || []);
+      if (participantsError) throw participantsError;
+      
+      const participantsData = participantsResponse?.participants || [];
+      // Sort by created_at descending
+      participantsData.sort((a: Participant, b: Participant) => 
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      
+      setParticipants(participantsData);
 
       // Calculate stats
-      const total = participantsData?.length || 0;
-      const male = participantsData?.filter(p => p.gender === 'male').length || 0;
-      const female = participantsData?.filter(p => p.gender === 'female').length || 0;
-      const nonBinary = participantsData?.filter(p => p.gender === 'non_binary').length || 0;
-      const completed = participantsData?.filter(p => p.questionnaire_complete).length || 0;
+      const total = participantsData.length;
+      const male = participantsData.filter((p: Participant) => p.gender === 'male').length;
+      const female = participantsData.filter((p: Participant) => p.gender === 'female').length;
+      const nonBinary = participantsData.filter((p: Participant) => p.gender === 'non_binary').length;
+      const completed = participantsData.filter((p: Participant) => p.questionnaire_complete).length;
 
       setStats({
         total,
@@ -121,19 +126,23 @@ export default function Admin() {
         completionRate: total > 0 ? Math.round((completed / total) * 100) : 0,
       });
 
-      // Load matches with participant names
-      const { data: matchesData } = await supabase
-        .from('matches')
-        .select('*');
+      // Load matches via edge function
+      const { data: matchesResponse, error: matchesError } = await supabase.functions.invoke('admin-data', {
+        body: { password, action: 'get-matches' }
+      });
 
-      if (matchesData && matchesData.length > 0) {
+      if (matchesError) throw matchesError;
+
+      const matchesData = matchesResponse?.matches || [];
+
+      if (matchesData.length > 0) {
         setMatchingComplete(true);
         
         // Build participant name map
         const nameMap = new Map<string, string>();
-        participantsData?.forEach(p => nameMap.set(p.id, p.name));
+        participantsData.forEach((p: Participant) => nameMap.set(p.id, p.name));
 
-        const matchesWithDetails: MatchWithDetails[] = matchesData.map(m => ({
+        const matchesWithDetails: MatchWithDetails[] = matchesData.map((m: any) => ({
           id: m.id,
           participant_id: m.participant_id,
           participant_name: nameMap.get(m.participant_id) || 'Unknown',
@@ -151,14 +160,13 @@ export default function Admin() {
         setMatches(matchesWithDetails);
       }
 
-      // Check results visibility
-      const { data: settings } = await supabase
-        .from('app_settings')
-        .select('value')
-        .eq('key', 'results_visible')
-        .maybeSingle();
+      // Check results visibility via edge function
+      const { data: settingsResponse } = await supabase.functions.invoke('admin-data', {
+        body: { password, action: 'get-settings' }
+      });
 
-      setResultsVisible(settings?.value === true);
+      const visibilitySetting = settingsResponse?.settings?.find((s: any) => s.key === 'results_visible');
+      setResultsVisible(visibilitySetting?.value === true);
     } catch (err) {
       console.error('Error loading data:', err);
       toast.error('Failed to load data');
@@ -199,22 +207,11 @@ export default function Admin() {
     try {
       const newValue = !resultsVisible;
       
-      const { data: existing } = await supabase
-        .from('app_settings')
-        .select('id')
-        .eq('key', 'results_visible')
-        .maybeSingle();
+      const { error } = await supabase.functions.invoke('admin-data', {
+        body: { password, action: 'toggle-visibility', data: { visible: newValue } }
+      });
 
-      if (existing) {
-        await supabase
-          .from('app_settings')
-          .update({ value: newValue })
-          .eq('key', 'results_visible');
-      } else {
-        await supabase
-          .from('app_settings')
-          .insert({ key: 'results_visible', value: newValue });
-      }
+      if (error) throw error;
 
       setResultsVisible(newValue);
       toast.success(newValue ? 'Results are now visible to participants' : 'Results are now hidden');
@@ -236,10 +233,17 @@ export default function Admin() {
     if (!editingScore) return;
 
     try {
-      const { error } = await supabase
-        .from('matches')
-        .update({ [editingScore.field]: editingScore.value })
-        .eq('id', editingScore.matchId);
+      const { error } = await supabase.functions.invoke('admin-data', {
+        body: { 
+          password, 
+          action: 'update-score', 
+          data: { 
+            matchId: editingScore.matchId, 
+            field: editingScore.field, 
+            value: editingScore.value 
+          } 
+        }
+      });
 
       if (error) throw error;
 
