@@ -176,19 +176,20 @@ export default function Admin() {
   };
 
   const runMatching = async () => {
-    if (matchingComplete) {
+    const isRerun = matchingComplete || matches.length > 0;
+    
+    if (isRerun) {
       const confirmed = window.confirm(
         'Matching has already been run. Running again will DELETE all existing matches and create new ones. Continue?'
       );
       if (!confirmed) return;
-
-      // Delete existing matches
-      await supabase.from('matches').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     }
 
     setMatchingRunning(true);
     try {
-      const { error } = await supabase.functions.invoke('run-matching');
+      const { data, error } = await supabase.functions.invoke('run-matching', {
+        body: { force: isRerun }
+      });
       
       if (error) throw error;
 
