@@ -39,7 +39,16 @@ Deno.serve(async (req) => {
   }
 
   try {
-    console.log('Starting matching algorithm...');
+    // Parse request body for force parameter
+    let force = false;
+    try {
+      const body = await req.json();
+      force = body?.force === true;
+    } catch {
+      // No body or invalid JSON, proceed without force
+    }
+
+    console.log('Starting matching algorithm...', { force });
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -52,11 +61,26 @@ Deno.serve(async (req) => {
       .limit(1);
 
     if (existingMatches && existingMatches.length > 0) {
-      console.log('Matching already completed');
-      return new Response(
-        JSON.stringify({ error: 'Matching has already been run' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      if (!force) {
+        console.log('Matching already completed. Use force=true to re-run.');
+        return new Response(
+          JSON.stringify({ error: 'Matching has already been run. Use force option to re-run.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      // Force mode: clear existing matches first
+      console.log('Force mode: clearing existing matches...');
+      const { error: deleteError } = await supabase
+        .from('matches')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+      
+      if (deleteError) {
+        console.error('Failed to clear existing matches:', deleteError);
+        throw deleteError;
+      }
+      console.log('Existing matches cleared successfully');
     }
 
     // Get all completed participants
