@@ -110,12 +110,13 @@ Deno.serve(async (req) => {
     const responseMap = new Map<string, QuestionnaireResponse>();
     responses?.forEach(r => responseMap.set(r.user_id, r));
 
-    // Calculate scores for all valid pairs
-    const allScores: MatchScore[] = [];
+    // Calculate scores for all valid pairs (symmetric - only calculate once per pair)
+    const pairScores = new Map<string, number>(); // "id1:id2" -> score (where id1 < id2)
 
-    for (const p1 of participants) {
-      for (const p2 of participants) {
-        if (p1.id === p2.id) continue;
+    for (let i = 0; i < participants.length; i++) {
+      for (let j = i + 1; j < participants.length; j++) {
+        const p1 = participants[i];
+        const p2 = participants[j];
 
         // Check bi-directional preference compatibility
         const p1LikesP2 = p1.partner_preference.includes(p2.gender);
@@ -129,38 +130,107 @@ Deno.serve(async (req) => {
         if (!r1 || !r2) continue;
 
         const score = calculateCompatibility(r1, r2);
-        allScores.push({ participantId: p1.id, matchId: p2.id, score });
+        const pairKey = [p1.id, p2.id].sort().join(':');
+        pairScores.set(pairKey, score);
       }
     }
 
-    console.log(`Calculated ${allScores.length} potential matches`);
+    console.log(`Calculated ${pairScores.size} valid mutual pairs`);
 
-    // Group by participant and get top 3 for each
-    const scoresByParticipant = new Map<string, MatchScore[]>();
+    // Build adjacency list of potential matches per participant
+    const potentialMatches = new Map<string, { matchId: string; score: number }[]>();
     
-    allScores.forEach(score => {
-      const existing = scoresByParticipant.get(score.participantId) || [];
-      existing.push(score);
-      scoresByParticipant.set(score.participantId, existing);
+    for (const p of participants) {
+      potentialMatches.set(p.id, []);
+    }
+
+    for (const [pairKey, score] of pairScores) {
+      const [id1, id2] = pairKey.split(':');
+      potentialMatches.get(id1)!.push({ matchId: id2, score });
+      potentialMatches.get(id2)!.push({ matchId: id1, score });
+    }
+
+    // Sort each participant's potential matches by score descending
+    for (const matches of potentialMatches.values()) {
+      matches.sort((a, b) => b.score - a.score);
+    }
+
+    // Greedy mutual matching: assign matches ensuring symmetry
+    const assignedMatches = new Map<string, { matchId: string; score: number }[]>();
+    const matchCount = new Map<string, number>(); // Track how many times each person is matched
+    
+    for (const p of participants) {
+      assignedMatches.set(p.id, []);
+      matchCount.set(p.id, 0);
+    }
+
+    // Process participants by fewest options first (those with limited choices get priority)
+    const participantsByOptions = [...participants].sort((a, b) => {
+      const aOptions = potentialMatches.get(a.id)?.length || 0;
+      const bOptions = potentialMatches.get(b.id)?.length || 0;
+      return aOptions - bOptions;
     });
+
+    // First pass: Try to give everyone at least some matches
+    for (const participant of participantsByOptions) {
+      const currentMatches = assignedMatches.get(participant.id)!;
+      if (currentMatches.length >= 3) continue;
+
+      const candidates = potentialMatches.get(participant.id) || [];
+      
+      for (const candidate of candidates) {
+        if (currentMatches.length >= 3) break;
+        
+        // Skip if already matched with this person
+        if (currentMatches.some(m => m.matchId === candidate.matchId)) continue;
+        
+        const otherMatches = assignedMatches.get(candidate.matchId)!;
+        
+        // Check if the other person can still accept matches (max 3)
+        if (otherMatches.length >= 3) continue;
+        
+        // Assign mutual match
+        currentMatches.push({ matchId: candidate.matchId, score: candidate.score });
+        otherMatches.push({ matchId: participant.id, score: candidate.score });
+        
+        matchCount.set(participant.id, (matchCount.get(participant.id) || 0) + 1);
+        matchCount.set(candidate.matchId, (matchCount.get(candidate.matchId) || 0) + 1);
+      }
+    }
+
+    // Log matching statistics
+    let totalAssigned = 0;
+    let withThreeMatches = 0;
+    let withTwoMatches = 0;
+    let withOneMatch = 0;
+    let withNoMatches = 0;
+
+    for (const [id, matches] of assignedMatches) {
+      totalAssigned += matches.length;
+      if (matches.length === 3) withThreeMatches++;
+      else if (matches.length === 2) withTwoMatches++;
+      else if (matches.length === 1) withOneMatch++;
+      else withNoMatches++;
+    }
+
+    console.log(`Matching stats: 3 matches: ${withThreeMatches}, 2 matches: ${withTwoMatches}, 1 match: ${withOneMatch}, 0 matches: ${withNoMatches}`);
 
     // Create match records
     const matchRecords: any[] = [];
 
     for (const participant of participants) {
-      const scores = scoresByParticipant.get(participant.id) || [];
-      // Sort by score descending and take top 3
-      scores.sort((a, b) => b.score - a.score);
-      const top3 = scores.slice(0, 3);
+      const matches = assignedMatches.get(participant.id) || [];
+      // Sort by score descending
+      matches.sort((a, b) => b.score - a.score);
 
       matchRecords.push({
         participant_id: participant.id,
-        match_1_id: top3[0]?.matchId || null,
-        match_1_score: top3[0]?.score || null,
-        match_2_id: top3[1]?.matchId || null,
-        match_2_score: top3[1]?.score || null,
-        match_3_id: top3[2]?.matchId || null,
-        match_3_score: top3[2]?.score || null,
+        match_1_id: matches[0]?.matchId || null,
+        match_1_score: matches[0]?.score || null,
+        match_2_id: matches[1]?.matchId || null,
+        match_2_score: matches[1]?.score || null,
+        match_3_id: matches[2]?.matchId || null,
+        match_3_score: matches[2]?.score || null,
       });
     }
 
