@@ -24,6 +24,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { Participant, GENDER_OPTIONS } from '@/lib/types';
 import { toast } from 'sonner';
 import darvixLogo from '@/assets/darvix-logo.png';
+import { useAuth } from '@/hooks/useAuth';
+import { useNavigate } from 'react-router-dom';
 import {
   Table,
   TableBody,
@@ -32,8 +34,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-
-const ADMIN_PASSWORD = 'DARVIXHRSC';
 
 interface Stats {
   total: number;
@@ -66,9 +66,8 @@ interface EditingScore {
 }
 
 export default function Admin() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [password, setPassword] = useState('');
-  const [passwordError, setPasswordError] = useState('');
+  const { user, session, loading: authLoading, isAdmin } = useAuth();
+  const navigate = useNavigate();
   
   const [loading, setLoading] = useState(false);
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -81,23 +80,33 @@ export default function Admin() {
   const [activeTab, setActiveTab] = useState<'participants' | 'matches'>('participants');
   const [editingScore, setEditingScore] = useState<EditingScore | null>(null);
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (password === ADMIN_PASSWORD) {
-      setIsAuthenticated(true);
-      setPasswordError('');
-      loadData();
-    } else {
-      setPasswordError('Invalid password');
+  // Redirect if not authenticated or not admin
+  useEffect(() => {
+    if (!authLoading) {
+      if (!user) {
+        navigate('/auth');
+      } else if (!isAdmin) {
+        toast.error('Admin access required');
+        navigate('/');
+      }
     }
-  };
+  }, [user, isAdmin, authLoading, navigate]);
+
+  // Load data when authenticated as admin
+  useEffect(() => {
+    if (user && isAdmin && session) {
+      loadData();
+    }
+  }, [user, isAdmin, session]);
 
   const loadData = async () => {
+    if (!session?.access_token) return;
+    
     setLoading(true);
     try {
-      // Load participants via edge function (bypasses RLS)
+      // Load participants via edge function (uses JWT auth)
       const { data: participantsResponse, error: participantsError } = await supabase.functions.invoke('admin-data', {
-        body: { password, action: 'get-participants' }
+        body: { action: 'get-participants' }
       });
 
       if (participantsError) throw participantsError;
@@ -128,7 +137,7 @@ export default function Admin() {
 
       // Load matches via edge function
       const { data: matchesResponse, error: matchesError } = await supabase.functions.invoke('admin-data', {
-        body: { password, action: 'get-matches' }
+        body: { action: 'get-matches' }
       });
 
       if (matchesError) throw matchesError;
@@ -162,7 +171,7 @@ export default function Admin() {
 
       // Check results visibility via edge function
       const { data: settingsResponse } = await supabase.functions.invoke('admin-data', {
-        body: { password, action: 'get-settings' }
+        body: { action: 'get-settings' }
       });
 
       const visibilitySetting = settingsResponse?.settings?.find((s: any) => s.key === 'results_visible');
@@ -209,7 +218,7 @@ export default function Admin() {
       const newValue = !resultsVisible;
       
       const { error } = await supabase.functions.invoke('admin-data', {
-        body: { password, action: 'toggle-visibility', data: { visible: newValue } }
+        body: { action: 'toggle-visibility', data: { visible: newValue } }
       });
 
       if (error) throw error;
@@ -236,7 +245,6 @@ export default function Admin() {
     try {
       const { error } = await supabase.functions.invoke('admin-data', {
         body: { 
-          password, 
           action: 'update-score', 
           data: { 
             matchId: editingScore.matchId, 
@@ -332,57 +340,26 @@ export default function Admin() {
     return GENDER_OPTIONS.find(g => g.value === gender)?.label || gender;
   };
 
-  // Login Screen
-  if (!isAuthenticated) {
+  // Loading state
+  if (authLoading || loading) {
     return (
       <DataGridBackground>
-        <div className="min-h-screen flex items-center justify-center px-4">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="w-full max-w-md"
-          >
-            <div className="bg-card border border-border rounded-2xl p-8">
-              <div className="text-center mb-8">
-                <img src={darvixLogo} alt="DARVIX" className="h-12 mx-auto mb-6" />
-                <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Lock className="w-8 h-8 text-primary" />
-                </div>
-                <h1 className="text-2xl font-bold text-foreground mb-2">Admin Access</h1>
-                <p className="text-muted-foreground text-sm">Enter password to continue</p>
-              </div>
-
-              <form onSubmit={handleLogin} className="space-y-6">
-                <div className="space-y-2">
-                  <Input
-                    type="password"
-                    placeholder="Password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="bg-background text-center"
-                  />
-                </div>
-
-                {passwordError && (
-                  <p className="text-sm text-destructive text-center">{passwordError}</p>
-                )}
-
-                <Button type="submit" className="w-full" size="lg">
-                  Enter Dashboard
-                </Button>
-              </form>
-            </div>
-          </motion.div>
+        <div className="min-h-screen flex items-center justify-center">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
       </DataGridBackground>
     );
   }
 
-  if (loading) {
+  // Not authenticated or not admin - will be redirected by useEffect
+  if (!user || !isAdmin) {
     return (
       <DataGridBackground>
         <div className="min-h-screen flex items-center justify-center">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <div className="text-center">
+            <Lock className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+            <p className="text-muted-foreground">Admin access required</p>
+          </div>
         </div>
       </DataGridBackground>
     );
@@ -396,12 +373,12 @@ export default function Admin() {
           <div className="max-w-7xl mx-auto flex justify-between items-center">
             <img src={darvixLogo} alt="DARVIX" className="h-10" />
             <div className="flex items-center gap-4">
+              <span className="text-sm text-muted-foreground">
+                {user.email}
+              </span>
               <Button variant="ghost" size="sm" onClick={loadData}>
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Refresh
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setIsAuthenticated(false)}>
-                Logout
               </Button>
             </div>
           </div>
@@ -498,14 +475,14 @@ export default function Admin() {
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-2 mb-6">
-              <Button
+            <div className="flex gap-4 mb-6">
+              <Button 
                 variant={activeTab === 'participants' ? 'default' : 'outline'}
                 onClick={() => setActiveTab('participants')}
               >
                 Participants ({participants.length})
               </Button>
-              <Button
+              <Button 
                 variant={activeTab === 'matches' ? 'default' : 'outline'}
                 onClick={() => setActiveTab('matches')}
               >
@@ -514,197 +491,192 @@ export default function Admin() {
             </div>
 
             {/* Search */}
+            <div className="relative mb-6">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder={activeTab === 'participants' ? "Search by name or email..." : "Search by participant name..."}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+
+            {/* Data Tables */}
             <div className="bg-card border border-border rounded-xl overflow-hidden">
-              <div className="p-4 border-b border-border">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10 bg-background"
-                  />
-                </div>
-              </div>
-
-              {/* Participants Table */}
-              {activeTab === 'participants' && (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead>Age</TableHead>
-                        <TableHead>Gender</TableHead>
-                        <TableHead>Preference</TableHead>
-                        <TableHead>Status</TableHead>
+              {activeTab === 'participants' ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Age</TableHead>
+                      <TableHead>Gender</TableHead>
+                      <TableHead>Preference</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredParticipants.map((p) => (
+                      <TableRow key={p.id}>
+                        <TableCell className="font-medium">{p.name}</TableCell>
+                        <TableCell>{p.email}</TableCell>
+                        <TableCell>{p.age}</TableCell>
+                        <TableCell>{getGenderLabel(p.gender)}</TableCell>
+                        <TableCell>{p.partner_preference.map(getGenderLabel).join(', ')}</TableCell>
+                        <TableCell>
+                          {p.questionnaire_complete ? (
+                            <span className="inline-flex items-center gap-1 text-sm text-green-500">
+                              <CheckCircle className="w-4 h-4" />
+                              Complete
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-sm text-yellow-500">
+                              <AlertCircle className="w-4 h-4" />
+                              Pending
+                            </span>
+                          )}
+                        </TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredParticipants.map((participant) => (
-                        <TableRow key={participant.id}>
-                          <TableCell className="font-medium">{participant.name}</TableCell>
-                          <TableCell className="text-muted-foreground">{participant.email}</TableCell>
-                          <TableCell>{participant.age}</TableCell>
-                          <TableCell>{getGenderLabel(participant.gender)}</TableCell>
-                          <TableCell>
-                            {participant.partner_preference.map(getGenderLabel).join(', ')}
-                          </TableCell>
-                          <TableCell>
-                            {participant.questionnaire_complete ? (
-                              <span className="inline-flex items-center gap-1 text-success text-sm">
-                                <CheckCircle className="w-4 h-4" />
-                                Complete
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 text-warning text-sm">
-                                <AlertCircle className="w-4 h-4" />
-                                Incomplete
-                              </span>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                      {filteredParticipants.length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                            No participants found
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-
-              {/* Matches Table */}
-              {activeTab === 'matches' && (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
+                    ))}
+                    {filteredParticipants.length === 0 && (
                       <TableRow>
-                        <TableHead>Participant</TableHead>
-                        <TableHead>Match 1</TableHead>
-                        <TableHead>Score 1</TableHead>
-                        <TableHead>Match 2</TableHead>
-                        <TableHead>Score 2</TableHead>
-                        <TableHead>Match 3</TableHead>
-                        <TableHead>Score 3</TableHead>
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          No participants found
+                        </TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredMatches.map((match) => (
-                        <TableRow key={match.id}>
-                          <TableCell className="font-medium">{match.participant_name}</TableCell>
-                          <TableCell>{match.match_1_name || '-'}</TableCell>
-                          <TableCell>
-                            {editingScore?.matchId === match.id && editingScore.field === 'match_1_score' ? (
-                              <div className="flex items-center gap-1">
-                                <Input
-                                  type="number"
-                                  value={editingScore.value}
-                                  onChange={(e) => setEditingScore({ ...editingScore, value: parseInt(e.target.value) || 0 })}
-                                  className="w-20 h-8 text-sm"
-                                />
-                                <Button size="sm" variant="ghost" onClick={saveScore}>
-                                  <Save className="w-4 h-4" />
+                    )}
+                  </TableBody>
+                </Table>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Participant</TableHead>
+                      <TableHead>Match 1</TableHead>
+                      <TableHead>Score 1</TableHead>
+                      <TableHead>Match 2</TableHead>
+                      <TableHead>Score 2</TableHead>
+                      <TableHead>Match 3</TableHead>
+                      <TableHead>Score 3</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredMatches.map((m) => (
+                      <TableRow key={m.id}>
+                        <TableCell className="font-medium">{m.participant_name}</TableCell>
+                        <TableCell>{m.match_1_name || '-'}</TableCell>
+                        <TableCell>
+                          {editingScore?.matchId === m.id && editingScore?.field === 'match_1_score' ? (
+                            <div className="flex items-center gap-1">
+                              <Input
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={editingScore.value}
+                                onChange={(e) => setEditingScore({ ...editingScore, value: parseInt(e.target.value) || 0 })}
+                                className="w-16 h-8"
+                              />
+                              <Button size="sm" variant="ghost" onClick={saveScore}>
+                                <Save className="w-3 h-3" />
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingScore(null)}>
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <span>{m.match_1_score ?? '-'}</span>
+                              {m.match_1_id && (
+                                <Button 
+                                  size="sm" 
+                                  variant="ghost" 
+                                  onClick={() => startEditing(m.id, 'match_1_score', m.match_1_score)}
+                                >
+                                  <Edit3 className="w-3 h-3" />
                                 </Button>
-                                <Button size="sm" variant="ghost" onClick={() => setEditingScore(null)}>
-                                  <X className="w-4 h-4" />
+                              )}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell>{m.match_2_name || '-'}</TableCell>
+                        <TableCell>
+                          {editingScore?.matchId === m.id && editingScore?.field === 'match_2_score' ? (
+                            <div className="flex items-center gap-1">
+                              <Input
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={editingScore.value}
+                                onChange={(e) => setEditingScore({ ...editingScore, value: parseInt(e.target.value) || 0 })}
+                                className="w-16 h-8"
+                              />
+                              <Button size="sm" variant="ghost" onClick={saveScore}>
+                                <Save className="w-3 h-3" />
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingScore(null)}>
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <span>{m.match_2_score ?? '-'}</span>
+                              {m.match_2_id && (
+                                <Button 
+                                  size="sm" 
+                                  variant="ghost" 
+                                  onClick={() => startEditing(m.id, 'match_2_score', m.match_2_score)}
+                                >
+                                  <Edit3 className="w-3 h-3" />
                                 </Button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-2">
-                                <span>{match.match_1_score ?? '-'}</span>
-                                {match.match_1_id && (
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => startEditing(match.id, 'match_1_score', match.match_1_score)}
-                                  >
-                                    <Edit3 className="w-3 h-3" />
-                                  </Button>
-                                )}
-                              </div>
-                            )}
-                          </TableCell>
-                          <TableCell>{match.match_2_name || '-'}</TableCell>
-                          <TableCell>
-                            {editingScore?.matchId === match.id && editingScore.field === 'match_2_score' ? (
-                              <div className="flex items-center gap-1">
-                                <Input
-                                  type="number"
-                                  value={editingScore.value}
-                                  onChange={(e) => setEditingScore({ ...editingScore, value: parseInt(e.target.value) || 0 })}
-                                  className="w-20 h-8 text-sm"
-                                />
-                                <Button size="sm" variant="ghost" onClick={saveScore}>
-                                  <Save className="w-4 h-4" />
+                              )}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell>{m.match_3_name || '-'}</TableCell>
+                        <TableCell>
+                          {editingScore?.matchId === m.id && editingScore?.field === 'match_3_score' ? (
+                            <div className="flex items-center gap-1">
+                              <Input
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={editingScore.value}
+                                onChange={(e) => setEditingScore({ ...editingScore, value: parseInt(e.target.value) || 0 })}
+                                className="w-16 h-8"
+                              />
+                              <Button size="sm" variant="ghost" onClick={saveScore}>
+                                <Save className="w-3 h-3" />
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingScore(null)}>
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <span>{m.match_3_score ?? '-'}</span>
+                              {m.match_3_id && (
+                                <Button 
+                                  size="sm" 
+                                  variant="ghost" 
+                                  onClick={() => startEditing(m.id, 'match_3_score', m.match_3_score)}
+                                >
+                                  <Edit3 className="w-3 h-3" />
                                 </Button>
-                                <Button size="sm" variant="ghost" onClick={() => setEditingScore(null)}>
-                                  <X className="w-4 h-4" />
-                                </Button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-2">
-                                <span>{match.match_2_score ?? '-'}</span>
-                                {match.match_2_id && (
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => startEditing(match.id, 'match_2_score', match.match_2_score)}
-                                  >
-                                    <Edit3 className="w-3 h-3" />
-                                  </Button>
-                                )}
-                              </div>
-                            )}
-                          </TableCell>
-                          <TableCell>{match.match_3_name || '-'}</TableCell>
-                          <TableCell>
-                            {editingScore?.matchId === match.id && editingScore.field === 'match_3_score' ? (
-                              <div className="flex items-center gap-1">
-                                <Input
-                                  type="number"
-                                  value={editingScore.value}
-                                  onChange={(e) => setEditingScore({ ...editingScore, value: parseInt(e.target.value) || 0 })}
-                                  className="w-20 h-8 text-sm"
-                                />
-                                <Button size="sm" variant="ghost" onClick={saveScore}>
-                                  <Save className="w-4 h-4" />
-                                </Button>
-                                <Button size="sm" variant="ghost" onClick={() => setEditingScore(null)}>
-                                  <X className="w-4 h-4" />
-                                </Button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-2">
-                                <span>{match.match_3_score ?? '-'}</span>
-                                {match.match_3_id && (
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => startEditing(match.id, 'match_3_score', match.match_3_score)}
-                                  >
-                                    <Edit3 className="w-3 h-3" />
-                                  </Button>
-                                )}
-                              </div>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                      {filteredMatches.length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                            {matchingComplete ? 'No matches found' : 'Run matching first to see results'}
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
+                              )}
+                            </div>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {filteredMatches.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                          {matchingComplete ? 'No matches found' : 'Run matching to generate matches'}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               )}
             </div>
           </motion.div>
