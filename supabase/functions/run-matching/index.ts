@@ -155,24 +155,81 @@ Deno.serve(async (req) => {
       matches.sort((a, b) => b.score - a.score);
     }
 
-    // Greedy mutual matching: assign matches ensuring symmetry
-    const assignedMatches = new Map<string, { matchId: string; score: number }[]>();
-    const matchCount = new Map<string, number>(); // Track how many times each person is matched
+    // Multi-pass mutual matching: assign matches ensuring symmetry with fair distribution
+    const assignedMatches = new Map<string, { matchId: string; score: number; isMutual: boolean }[]>();
     
     for (const p of participants) {
       assignedMatches.set(p.id, []);
-      matchCount.set(p.id, 0);
     }
 
-    // Process participants by fewest options first (those with limited choices get priority)
-    const participantsByOptions = [...participants].sort((a, b) => {
-      const aOptions = potentialMatches.get(a.id)?.length || 0;
-      const bOptions = potentialMatches.get(b.id)?.length || 0;
-      return aOptions - bOptions;
-    });
+    // Helper function to get participants sorted by fewest remaining options
+    const getParticipantsByPriority = () => {
+      return [...participants].sort((a, b) => {
+        const aMatches = assignedMatches.get(a.id)!;
+        const bMatches = assignedMatches.get(b.id)!;
+        
+        // Prioritize those with fewer current matches
+        if (aMatches.length !== bMatches.length) {
+          return aMatches.length - bMatches.length;
+        }
+        
+        // Then by fewer remaining options
+        const aOptions = (potentialMatches.get(a.id) || []).filter(
+          c => !aMatches.some(m => m.matchId === c.matchId) && 
+               assignedMatches.get(c.matchId)!.length < 3
+        ).length;
+        const bOptions = (potentialMatches.get(b.id) || []).filter(
+          c => !bMatches.some(m => m.matchId === c.matchId) && 
+               assignedMatches.get(c.matchId)!.length < 3
+        ).length;
+        return aOptions - bOptions;
+      });
+    };
 
-    // First pass: Try to give everyone at least some matches
-    for (const participant of participantsByOptions) {
+    // PASS 1: Give everyone at least 1 match
+    console.log('Pass 1: Ensuring everyone gets at least 1 match...');
+    for (const participant of getParticipantsByPriority()) {
+      const currentMatches = assignedMatches.get(participant.id)!;
+      if (currentMatches.length >= 1) continue;
+
+      const candidates = potentialMatches.get(participant.id) || [];
+      
+      for (const candidate of candidates) {
+        if (currentMatches.length >= 1) break;
+        if (currentMatches.some(m => m.matchId === candidate.matchId)) continue;
+        
+        const otherMatches = assignedMatches.get(candidate.matchId)!;
+        if (otherMatches.length >= 3) continue;
+        
+        // Assign mutual match
+        currentMatches.push({ matchId: candidate.matchId, score: candidate.score, isMutual: true });
+        otherMatches.push({ matchId: participant.id, score: candidate.score, isMutual: true });
+      }
+    }
+
+    // PASS 2: Give everyone a 2nd match where possible
+    console.log('Pass 2: Filling second matches...');
+    for (const participant of getParticipantsByPriority()) {
+      const currentMatches = assignedMatches.get(participant.id)!;
+      if (currentMatches.length >= 2) continue;
+
+      const candidates = potentialMatches.get(participant.id) || [];
+      
+      for (const candidate of candidates) {
+        if (currentMatches.length >= 2) break;
+        if (currentMatches.some(m => m.matchId === candidate.matchId)) continue;
+        
+        const otherMatches = assignedMatches.get(candidate.matchId)!;
+        if (otherMatches.length >= 3) continue;
+        
+        currentMatches.push({ matchId: candidate.matchId, score: candidate.score, isMutual: true });
+        otherMatches.push({ matchId: participant.id, score: candidate.score, isMutual: true });
+      }
+    }
+
+    // PASS 3: Fill up to 3 matches
+    console.log('Pass 3: Completing to 3 matches...');
+    for (const participant of getParticipantsByPriority()) {
       const currentMatches = assignedMatches.get(participant.id)!;
       if (currentMatches.length >= 3) continue;
 
@@ -180,40 +237,57 @@ Deno.serve(async (req) => {
       
       for (const candidate of candidates) {
         if (currentMatches.length >= 3) break;
-        
-        // Skip if already matched with this person
         if (currentMatches.some(m => m.matchId === candidate.matchId)) continue;
         
         const otherMatches = assignedMatches.get(candidate.matchId)!;
-        
-        // Check if the other person can still accept matches (max 3)
         if (otherMatches.length >= 3) continue;
         
-        // Assign mutual match
-        currentMatches.push({ matchId: candidate.matchId, score: candidate.score });
-        otherMatches.push({ matchId: participant.id, score: candidate.score });
+        currentMatches.push({ matchId: candidate.matchId, score: candidate.score, isMutual: true });
+        otherMatches.push({ matchId: participant.id, score: candidate.score, isMutual: true });
+      }
+    }
+
+    // PASS 4: Fallback for participants with 0 matches - assign one-sided suggestions
+    console.log('Pass 4: Adding fallback matches for unmatched participants...');
+    for (const participant of participants) {
+      const currentMatches = assignedMatches.get(participant.id)!;
+      if (currentMatches.length > 0) continue;
+
+      // Find best compatible candidates even if they're at capacity
+      const candidates = potentialMatches.get(participant.id) || [];
+      
+      for (const candidate of candidates) {
+        if (currentMatches.length >= 3) break;
+        if (currentMatches.some(m => m.matchId === candidate.matchId)) continue;
         
-        matchCount.set(participant.id, (matchCount.get(participant.id) || 0) + 1);
-        matchCount.set(candidate.matchId, (matchCount.get(candidate.matchId) || 0) + 1);
+        // Add as one-sided suggestion (not adding to the other person's list)
+        currentMatches.push({ matchId: candidate.matchId, score: candidate.score, isMutual: false });
+      }
+      
+      if (currentMatches.length > 0) {
+        console.log(`Added ${currentMatches.length} fallback matches for participant ${participant.id}`);
       }
     }
 
     // Log matching statistics
-    let totalAssigned = 0;
     let withThreeMatches = 0;
     let withTwoMatches = 0;
     let withOneMatch = 0;
     let withNoMatches = 0;
+    let fallbackMatches = 0;
 
     for (const [id, matches] of assignedMatches) {
-      totalAssigned += matches.length;
-      if (matches.length === 3) withThreeMatches++;
+      const mutualCount = matches.filter(m => m.isMutual).length;
+      const fallbackCount = matches.filter(m => !m.isMutual).length;
+      fallbackMatches += fallbackCount;
+      
+      if (matches.length >= 3) withThreeMatches++;
       else if (matches.length === 2) withTwoMatches++;
       else if (matches.length === 1) withOneMatch++;
       else withNoMatches++;
     }
 
-    console.log(`Matching stats: 3 matches: ${withThreeMatches}, 2 matches: ${withTwoMatches}, 1 match: ${withOneMatch}, 0 matches: ${withNoMatches}`);
+    console.log(`Matching stats: 3+ matches: ${withThreeMatches}, 2 matches: ${withTwoMatches}, 1 match: ${withOneMatch}, 0 matches: ${withNoMatches}, fallback matches: ${fallbackMatches}`);
 
     // Create match records
     const matchRecords: any[] = [];
