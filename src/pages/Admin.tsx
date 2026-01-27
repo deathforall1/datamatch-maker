@@ -24,8 +24,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { Participant, GENDER_OPTIONS } from '@/lib/types';
 import { toast } from 'sonner';
 import darvixLogo from '@/assets/darvix-logo.png';
-import { useAuth } from '@/hooks/useAuth';
-import { useNavigate } from 'react-router-dom';
 import {
   Table,
   TableBody,
@@ -34,6 +32,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+
+const ADMIN_PASSWORD = 'DARVIXHRSC';
 
 interface Stats {
   total: number;
@@ -66,8 +66,9 @@ interface EditingScore {
 }
 
 export default function Admin() {
-  const { user, session, loading: authLoading, isAdmin } = useAuth();
-  const navigate = useNavigate();
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [password, setPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
   
   const [loading, setLoading] = useState(false);
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -80,33 +81,23 @@ export default function Admin() {
   const [activeTab, setActiveTab] = useState<'participants' | 'matches'>('participants');
   const [editingScore, setEditingScore] = useState<EditingScore | null>(null);
 
-  // Redirect if not authenticated or not admin
-  useEffect(() => {
-    if (!authLoading) {
-      if (!user) {
-        navigate('/auth');
-      } else if (!isAdmin) {
-        toast.error('Admin access required');
-        navigate('/');
-      }
-    }
-  }, [user, isAdmin, authLoading, navigate]);
-
-  // Load data when authenticated as admin
-  useEffect(() => {
-    if (user && isAdmin && session) {
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password === ADMIN_PASSWORD) {
+      setIsAuthenticated(true);
+      setPasswordError('');
       loadData();
+    } else {
+      setPasswordError('Invalid password');
     }
-  }, [user, isAdmin, session]);
+  };
 
   const loadData = async () => {
-    if (!session?.access_token) return;
-    
     setLoading(true);
     try {
-      // Load participants via edge function (uses JWT auth)
+      // Load participants via edge function (bypasses RLS)
       const { data: participantsResponse, error: participantsError } = await supabase.functions.invoke('admin-data', {
-        body: { action: 'get-participants' }
+        body: { password, action: 'get-participants' }
       });
 
       if (participantsError) throw participantsError;
@@ -137,7 +128,7 @@ export default function Admin() {
 
       // Load matches via edge function
       const { data: matchesResponse, error: matchesError } = await supabase.functions.invoke('admin-data', {
-        body: { action: 'get-matches' }
+        body: { password, action: 'get-matches' }
       });
 
       if (matchesError) throw matchesError;
@@ -171,7 +162,7 @@ export default function Admin() {
 
       // Check results visibility via edge function
       const { data: settingsResponse } = await supabase.functions.invoke('admin-data', {
-        body: { action: 'get-settings' }
+        body: { password, action: 'get-settings' }
       });
 
       const visibilitySetting = settingsResponse?.settings?.find((s: any) => s.key === 'results_visible');
@@ -218,7 +209,7 @@ export default function Admin() {
       const newValue = !resultsVisible;
       
       const { error } = await supabase.functions.invoke('admin-data', {
-        body: { action: 'toggle-visibility', data: { visible: newValue } }
+        body: { password, action: 'toggle-visibility', data: { visible: newValue } }
       });
 
       if (error) throw error;
@@ -245,6 +236,7 @@ export default function Admin() {
     try {
       const { error } = await supabase.functions.invoke('admin-data', {
         body: { 
+          password, 
           action: 'update-score', 
           data: { 
             matchId: editingScore.matchId, 
@@ -340,26 +332,57 @@ export default function Admin() {
     return GENDER_OPTIONS.find(g => g.value === gender)?.label || gender;
   };
 
-  // Loading state
-  if (authLoading || loading) {
+  // Login Screen
+  if (!isAuthenticated) {
     return (
       <DataGridBackground>
-        <div className="min-h-screen flex items-center justify-center">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <div className="min-h-screen flex items-center justify-center px-4">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="w-full max-w-md"
+          >
+            <div className="bg-card border border-border rounded-2xl p-8">
+              <div className="text-center mb-8">
+                <img src={darvixLogo} alt="DARVIX" className="h-12 mx-auto mb-6" />
+                <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Lock className="w-8 h-8 text-primary" />
+                </div>
+                <h1 className="text-2xl font-bold text-foreground mb-2">Admin Access</h1>
+                <p className="text-muted-foreground text-sm">Enter password to continue</p>
+              </div>
+
+              <form onSubmit={handleLogin} className="space-y-6">
+                <div className="space-y-2">
+                  <Input
+                    type="password"
+                    placeholder="Password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="bg-background text-center"
+                  />
+                </div>
+
+                {passwordError && (
+                  <p className="text-sm text-destructive text-center">{passwordError}</p>
+                )}
+
+                <Button type="submit" className="w-full" size="lg">
+                  Enter Dashboard
+                </Button>
+              </form>
+            </div>
+          </motion.div>
         </div>
       </DataGridBackground>
     );
   }
 
-  // Not authenticated or not admin - will be redirected by useEffect
-  if (!user || !isAdmin) {
+  if (loading) {
     return (
       <DataGridBackground>
         <div className="min-h-screen flex items-center justify-center">
-          <div className="text-center">
-            <Lock className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-            <p className="text-muted-foreground">Admin access required</p>
-          </div>
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
       </DataGridBackground>
     );
@@ -373,12 +396,12 @@ export default function Admin() {
           <div className="max-w-7xl mx-auto flex justify-between items-center">
             <img src={darvixLogo} alt="DARVIX" className="h-10" />
             <div className="flex items-center gap-4">
-              <span className="text-sm text-muted-foreground">
-                {user.email}
-              </span>
               <Button variant="ghost" size="sm" onClick={loadData}>
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Refresh
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setIsAuthenticated(false)}>
+                Logout
               </Button>
             </div>
           </div>
