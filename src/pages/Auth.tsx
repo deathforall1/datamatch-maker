@@ -8,7 +8,6 @@ import { Label } from '@/components/ui/label';
 import { DataGridBackground } from '@/components/DataGridBackground';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
-import darvixLogo from '@/assets/darvix-logo.png';
 import { z } from 'zod';
 
 const emailSchema = z.string().email('Please enter a valid email address');
@@ -86,9 +85,6 @@ export default function Auth() {
         {/* Header */}
         <header className="w-full py-6 px-4">
           <div className="max-w-6xl mx-auto flex justify-between items-center">
-            <Link to="/">
-              <img src={darvixLogo} alt="DARVIX" className="h-10" />
-            </Link>
           </div>
         </header>
 

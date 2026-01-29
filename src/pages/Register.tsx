@@ -13,7 +13,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { GENDER_OPTIONS, GenderType } from '@/lib/types';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import darvixLogo from '@/assets/darvix-logo.png';
 
 type RegistrationStep = 1 | 2 | 3;
 
@@ -190,9 +189,6 @@ export default function Register() {
         {/* Header */}
         <header className="w-full py-6 px-4">
           <div className="max-w-6xl mx-auto flex justify-between items-center">
-            <Link to="/">
-              <img src={darvixLogo} alt="DARVIX" className="h-10" />
-            </Link>
           </div>
         </header>
 
@@ -381,7 +377,7 @@ export default function Register() {
                         }
                       />
                       <label htmlFor="consent" className="text-sm text-muted-foreground cursor-pointer">
-                        I consent to DARVIX using my responses for the Perfect Date matching event. 
+                        I consent to using my responses for the Kismat Konnection matching event. 
                         My data will be handled with care and not shared outside this event.
                       </label>
                     </div>

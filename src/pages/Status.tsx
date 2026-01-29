@@ -7,7 +7,6 @@ import { DataGridBackground } from '@/components/DataGridBackground';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { Participant, Match } from '@/lib/types';
-import darvixLogo from '@/assets/darvix-logo.png';
 
 interface MatchWithParticipant {
   id: string;
@@ -144,9 +143,6 @@ export default function Status() {
         {/* Header */}
         <header className="w-full py-6 px-4">
           <div className="max-w-6xl mx-auto flex justify-between items-center">
-            <Link to="/">
-              <img src={darvixLogo} alt="DARVIX" className="h-10" />
-            </Link>
             <div className="flex items-center gap-4">
               {isAdmin && (
                 <Link to="/admin">
@@ -244,7 +240,7 @@ export default function Status() {
                 </div>
 
                 <p className="text-center text-muted-foreground text-sm mt-6">
-                  Connect with your matches at the Perfect Date event!
+                  Connect with your matches at the Kismat Konnection event!
                 </p>
               </motion.div>
             )}

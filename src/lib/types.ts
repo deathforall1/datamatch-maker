@@ -1,4 +1,4 @@
-// Database types for Perfect Date app
+// Database types for Kismat Konnection app
 
 export type GenderType = 'male' | 'female' | 'non_binary';
 
