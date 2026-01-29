@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { DataGridBackground } from '@/components/DataGridBackground';
 import { useAuth } from '@/hooks/useAuth';
 import { useEffect } from 'react';
-import darvixLogo from '@/assets/darvix-logo.png';
 
 export default function Index() {
   const { user, loading } = useAuth();
@@ -23,7 +22,6 @@ export default function Index() {
         {/* Header */}
         <header className="w-full py-6 px-4">
           <div className="max-w-6xl mx-auto flex justify-between items-center">
-            <img src={darvixLogo} alt="DARVIX" className="h-10" />
             <Link to="/auth">
               <Button variant="outline" size="sm">
                 Sign In
@@ -53,8 +51,8 @@ export default function Index() {
 
               {/* Main Title */}
               <h1 className="text-5xl md:text-7xl font-bold text-foreground mb-6 tracking-tight">
-                Perfect
-                <span className="text-primary"> Date</span>
+                Kismat
+                <span className="text-primary"> Konnection</span>
               </h1>
 
               <p className="text-xl md:text-2xl text-muted-foreground mb-4 max-w-2xl mx-auto">

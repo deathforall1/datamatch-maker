@@ -23,7 +23,6 @@ import { DataGridBackground } from '@/components/DataGridBackground';
 import { supabase } from '@/integrations/supabase/client';
 import { Participant, GENDER_OPTIONS } from '@/lib/types';
 import { toast } from 'sonner';
-import darvixLogo from '@/assets/darvix-logo.png';
 import {
   Table,
   TableBody,
@@ -282,7 +281,7 @@ export default function Admin() {
     ].join(','));
 
     const csv = [headers.join(','), ...rows].join('\n');
-    downloadCSV(csv, 'perfect-date-matches.csv');
+    downloadCSV(csv, 'kismat-konnection-matches.csv');
     toast.success('Matches exported!');
   };
 
@@ -303,7 +302,7 @@ export default function Admin() {
     ].join(','));
 
     const csv = [headers.join(','), ...rows].join('\n');
-    downloadCSV(csv, 'perfect-date-participants.csv');
+    downloadCSV(csv, 'kismat-konnection-participants.csv');
     toast.success('Participants exported!');
   };
 
@@ -344,7 +343,6 @@ export default function Admin() {
           >
             <div className="bg-card border border-border rounded-2xl p-8">
               <div className="text-center mb-8">
-                <img src={darvixLogo} alt="DARVIX" className="h-12 mx-auto mb-6" />
                 <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Lock className="w-8 h-8 text-primary" />
                 </div>
@@ -394,7 +392,6 @@ export default function Admin() {
         {/* Header */}
         <header className="w-full py-6 px-4 border-b border-border">
           <div className="max-w-7xl mx-auto flex justify-between items-center">
-            <img src={darvixLogo} alt="DARVIX" className="h-10" />
             <div className="flex items-center gap-4">
               <Button variant="ghost" size="sm" onClick={loadData}>
                 <RefreshCw className="w-4 h-4 mr-2" />

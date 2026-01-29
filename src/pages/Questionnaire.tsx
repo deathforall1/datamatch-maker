@@ -20,7 +20,6 @@ import {
   QuestionnaireResponses
 } from '@/lib/types';
 import { toast } from 'sonner';
-import darvixLogo from '@/assets/darvix-logo.png';
 
 const TOTAL_STEPS = 10;
 
@@ -175,9 +174,6 @@ export default function Questionnaire() {
         {/* Header */}
         <header className="w-full py-6 px-4">
           <div className="max-w-6xl mx-auto flex justify-between items-center">
-            <Link to="/">
-              <img src={darvixLogo} alt="DARVIX" className="h-10" />
-            </Link>
             {saving && (
               <span className="text-sm text-muted-foreground flex items-center gap-2">
                 <Loader2 className="w-3 h-3 animate-spin" />
