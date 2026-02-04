@@ -66,8 +66,21 @@ Deno.serve(async (req) => {
         );
       }
 
-      case 'update-score': {
+      case 'update-match': {
         const { matchId, field, value } = data;
+        // Validate field is allowed
+        const allowedFields = [
+          'match_1_id', 'match_1_score',
+          'match_2_id', 'match_2_score',
+          'match_3_id', 'match_3_score'
+        ];
+        if (!allowedFields.includes(field)) {
+          return new Response(
+            JSON.stringify({ error: 'Invalid field' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        
         const { error } = await supabase
           .from('matches')
           .update({ [field]: value })

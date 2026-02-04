@@ -58,10 +58,11 @@ interface MatchWithDetails {
   match_3_score: number | null;
 }
 
-interface EditingScore {
+interface EditingMatch {
   matchId: string;
-  field: 'match_1_score' | 'match_2_score' | 'match_3_score';
-  value: number;
+  field: 'match_1_id' | 'match_1_score' | 'match_2_id' | 'match_2_score' | 'match_3_id' | 'match_3_score';
+  value: string | number;
+  type: 'id' | 'score';
 }
 
 export default function Admin() {
@@ -78,7 +79,7 @@ export default function Admin() {
   const [matchingComplete, setMatchingComplete] = useState(false);
   const [resultsVisible, setResultsVisible] = useState(false);
   const [activeTab, setActiveTab] = useState<'participants' | 'matches'>('participants');
-  const [editingScore, setEditingScore] = useState<EditingScore | null>(null);
+  const [editingMatch, setEditingMatch] = useState<EditingMatch | null>(null);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -221,26 +222,36 @@ export default function Admin() {
     }
   };
 
-  const startEditing = (matchId: string, field: 'match_1_score' | 'match_2_score' | 'match_3_score', currentValue: number | null) => {
-    setEditingScore({
+  const startEditingScore = (matchId: string, field: 'match_1_score' | 'match_2_score' | 'match_3_score', currentValue: number | null) => {
+    setEditingMatch({
       matchId,
       field,
       value: currentValue || 0,
+      type: 'score',
     });
   };
 
-  const saveScore = async () => {
-    if (!editingScore) return;
+  const startEditingMatchPerson = (matchId: string, field: 'match_1_id' | 'match_2_id' | 'match_3_id', currentValue: string | null) => {
+    setEditingMatch({
+      matchId,
+      field,
+      value: currentValue || '',
+      type: 'id',
+    });
+  };
+
+  const saveMatch = async () => {
+    if (!editingMatch) return;
 
     try {
       const { error } = await supabase.functions.invoke('admin-data', {
         body: { 
           password, 
-          action: 'update-score', 
+          action: 'update-match', 
           data: { 
-            matchId: editingScore.matchId, 
-            field: editingScore.field, 
-            value: editingScore.value 
+            matchId: editingMatch.matchId, 
+            field: editingMatch.field, 
+            value: editingMatch.value === '' ? null : editingMatch.value
           } 
         }
       });
@@ -248,18 +259,35 @@ export default function Admin() {
       if (error) throw error;
 
       // Update local state
-      setMatches(prev => prev.map(m => {
-        if (m.id === editingScore.matchId) {
-          return { ...m, [editingScore.field]: editingScore.value };
-        }
-        return m;
-      }));
+      if (editingMatch.type === 'id') {
+        const nameMap = new Map<string, string>();
+        participants.forEach((p: Participant) => nameMap.set(p.id, p.name));
+        const nameField = editingMatch.field.replace('_id', '_name') as 'match_1_name' | 'match_2_name' | 'match_3_name';
+        
+        setMatches(prev => prev.map(m => {
+          if (m.id === editingMatch.matchId) {
+            return { 
+              ...m, 
+              [editingMatch.field]: editingMatch.value || null,
+              [nameField]: editingMatch.value ? nameMap.get(editingMatch.value as string) || 'Unknown' : null,
+            };
+          }
+          return m;
+        }));
+      } else {
+        setMatches(prev => prev.map(m => {
+          if (m.id === editingMatch.matchId) {
+            return { ...m, [editingMatch.field]: editingMatch.value };
+          }
+          return m;
+        }));
+      }
 
-      toast.success('Score updated!');
-      setEditingScore(null);
+      toast.success(editingMatch.type === 'id' ? 'Match updated!' : 'Score updated!');
+      setEditingMatch(null);
     } catch (err) {
-      console.error('Error saving score:', err);
-      toast.error('Failed to save score');
+      console.error('Error saving match:', err);
+      toast.error('Failed to save');
     }
   };
 
@@ -584,105 +612,213 @@ export default function Admin() {
                     {filteredMatches.map((m) => (
                       <TableRow key={m.id}>
                         <TableCell className="font-medium">{m.participant_name}</TableCell>
-                        <TableCell>{m.match_1_name || '-'}</TableCell>
+                        
+                        {/* Match 1 Name */}
                         <TableCell>
-                          {editingScore?.matchId === m.id && editingScore?.field === 'match_1_score' ? (
+                          {editingMatch?.matchId === m.id && editingMatch?.field === 'match_1_id' ? (
+                            <div className="flex items-center gap-1">
+                              <select
+                                value={editingMatch.value as string}
+                                onChange={(e) => setEditingMatch({ ...editingMatch, value: e.target.value })}
+                                className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                              >
+                                <option value="">-- None --</option>
+                                {participants
+                                  .filter(p => p.id !== m.participant_id)
+                                  .map(p => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                  ))}
+                              </select>
+                              <Button size="sm" variant="ghost" onClick={saveMatch}>
+                                <Save className="w-3 h-3" />
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingMatch(null)}>
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <span>{m.match_1_name || '-'}</span>
+                              <Button 
+                                size="sm" 
+                                variant="ghost" 
+                                onClick={() => startEditingMatchPerson(m.id, 'match_1_id', m.match_1_id)}
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          )}
+                        </TableCell>
+                        
+                        {/* Match 1 Score */}
+                        <TableCell>
+                          {editingMatch?.matchId === m.id && editingMatch?.field === 'match_1_score' ? (
                             <div className="flex items-center gap-1">
                               <Input
                                 type="number"
                                 min="0"
                                 max="100"
-                                value={editingScore.value}
-                                onChange={(e) => setEditingScore({ ...editingScore, value: parseInt(e.target.value) || 0 })}
+                                value={editingMatch.value as number}
+                                onChange={(e) => setEditingMatch({ ...editingMatch, value: parseInt(e.target.value) || 0 })}
                                 className="w-16 h-8"
                               />
-                              <Button size="sm" variant="ghost" onClick={saveScore}>
+                              <Button size="sm" variant="ghost" onClick={saveMatch}>
                                 <Save className="w-3 h-3" />
                               </Button>
-                              <Button size="sm" variant="ghost" onClick={() => setEditingScore(null)}>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingMatch(null)}>
                                 <X className="w-3 h-3" />
                               </Button>
                             </div>
                           ) : (
                             <div className="flex items-center gap-1">
                               <span>{m.match_1_score ?? '-'}</span>
-                              {m.match_1_id && (
-                                <Button 
-                                  size="sm" 
-                                  variant="ghost" 
-                                  onClick={() => startEditing(m.id, 'match_1_score', m.match_1_score)}
-                                >
-                                  <Edit3 className="w-3 h-3" />
-                                </Button>
-                              )}
+                              <Button 
+                                size="sm" 
+                                variant="ghost" 
+                                onClick={() => startEditingScore(m.id, 'match_1_score', m.match_1_score)}
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </Button>
                             </div>
                           )}
                         </TableCell>
-                        <TableCell>{m.match_2_name || '-'}</TableCell>
+                        
+                        {/* Match 2 Name */}
                         <TableCell>
-                          {editingScore?.matchId === m.id && editingScore?.field === 'match_2_score' ? (
+                          {editingMatch?.matchId === m.id && editingMatch?.field === 'match_2_id' ? (
+                            <div className="flex items-center gap-1">
+                              <select
+                                value={editingMatch.value as string}
+                                onChange={(e) => setEditingMatch({ ...editingMatch, value: e.target.value })}
+                                className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                              >
+                                <option value="">-- None --</option>
+                                {participants
+                                  .filter(p => p.id !== m.participant_id)
+                                  .map(p => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                  ))}
+                              </select>
+                              <Button size="sm" variant="ghost" onClick={saveMatch}>
+                                <Save className="w-3 h-3" />
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingMatch(null)}>
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <span>{m.match_2_name || '-'}</span>
+                              <Button 
+                                size="sm" 
+                                variant="ghost" 
+                                onClick={() => startEditingMatchPerson(m.id, 'match_2_id', m.match_2_id)}
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          )}
+                        </TableCell>
+                        
+                        {/* Match 2 Score */}
+                        <TableCell>
+                          {editingMatch?.matchId === m.id && editingMatch?.field === 'match_2_score' ? (
                             <div className="flex items-center gap-1">
                               <Input
                                 type="number"
                                 min="0"
                                 max="100"
-                                value={editingScore.value}
-                                onChange={(e) => setEditingScore({ ...editingScore, value: parseInt(e.target.value) || 0 })}
+                                value={editingMatch.value as number}
+                                onChange={(e) => setEditingMatch({ ...editingMatch, value: parseInt(e.target.value) || 0 })}
                                 className="w-16 h-8"
                               />
-                              <Button size="sm" variant="ghost" onClick={saveScore}>
+                              <Button size="sm" variant="ghost" onClick={saveMatch}>
                                 <Save className="w-3 h-3" />
                               </Button>
-                              <Button size="sm" variant="ghost" onClick={() => setEditingScore(null)}>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingMatch(null)}>
                                 <X className="w-3 h-3" />
                               </Button>
                             </div>
                           ) : (
                             <div className="flex items-center gap-1">
                               <span>{m.match_2_score ?? '-'}</span>
-                              {m.match_2_id && (
-                                <Button 
-                                  size="sm" 
-                                  variant="ghost" 
-                                  onClick={() => startEditing(m.id, 'match_2_score', m.match_2_score)}
-                                >
-                                  <Edit3 className="w-3 h-3" />
-                                </Button>
-                              )}
+                              <Button 
+                                size="sm" 
+                                variant="ghost" 
+                                onClick={() => startEditingScore(m.id, 'match_2_score', m.match_2_score)}
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </Button>
                             </div>
                           )}
                         </TableCell>
-                        <TableCell>{m.match_3_name || '-'}</TableCell>
+                        
+                        {/* Match 3 Name */}
                         <TableCell>
-                          {editingScore?.matchId === m.id && editingScore?.field === 'match_3_score' ? (
+                          {editingMatch?.matchId === m.id && editingMatch?.field === 'match_3_id' ? (
+                            <div className="flex items-center gap-1">
+                              <select
+                                value={editingMatch.value as string}
+                                onChange={(e) => setEditingMatch({ ...editingMatch, value: e.target.value })}
+                                className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                              >
+                                <option value="">-- None --</option>
+                                {participants
+                                  .filter(p => p.id !== m.participant_id)
+                                  .map(p => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                  ))}
+                              </select>
+                              <Button size="sm" variant="ghost" onClick={saveMatch}>
+                                <Save className="w-3 h-3" />
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingMatch(null)}>
+                                <X className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <span>{m.match_3_name || '-'}</span>
+                              <Button 
+                                size="sm" 
+                                variant="ghost" 
+                                onClick={() => startEditingMatchPerson(m.id, 'match_3_id', m.match_3_id)}
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          )}
+                        </TableCell>
+                        
+                        {/* Match 3 Score */}
+                        <TableCell>
+                          {editingMatch?.matchId === m.id && editingMatch?.field === 'match_3_score' ? (
                             <div className="flex items-center gap-1">
                               <Input
                                 type="number"
                                 min="0"
                                 max="100"
-                                value={editingScore.value}
-                                onChange={(e) => setEditingScore({ ...editingScore, value: parseInt(e.target.value) || 0 })}
+                                value={editingMatch.value as number}
+                                onChange={(e) => setEditingMatch({ ...editingMatch, value: parseInt(e.target.value) || 0 })}
                                 className="w-16 h-8"
                               />
-                              <Button size="sm" variant="ghost" onClick={saveScore}>
+                              <Button size="sm" variant="ghost" onClick={saveMatch}>
                                 <Save className="w-3 h-3" />
                               </Button>
-                              <Button size="sm" variant="ghost" onClick={() => setEditingScore(null)}>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingMatch(null)}>
                                 <X className="w-3 h-3" />
                               </Button>
                             </div>
                           ) : (
                             <div className="flex items-center gap-1">
                               <span>{m.match_3_score ?? '-'}</span>
-                              {m.match_3_id && (
-                                <Button 
-                                  size="sm" 
-                                  variant="ghost" 
-                                  onClick={() => startEditing(m.id, 'match_3_score', m.match_3_score)}
-                                >
-                                  <Edit3 className="w-3 h-3" />
-                                </Button>
-                              )}
+                              <Button 
+                                size="sm" 
+                                variant="ghost" 
+                                onClick={() => startEditingScore(m.id, 'match_3_score', m.match_3_score)}
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </Button>
                             </div>
                           )}
                         </TableCell>
